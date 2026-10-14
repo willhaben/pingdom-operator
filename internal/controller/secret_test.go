@@ -35,8 +35,8 @@ import (
 
 type checkSpec = pingdomwillhabenatv1alpha1.CheckSpec
 
-func secret(ns, name string, data map[string]string) *corev1.Secret {
-	s := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: name}, Data: map[string][]byte{}}
+func secret(name string, data map[string]string) *corev1.Secret {
+	s := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: "ns", Name: name}, Data: map[string][]byte{}}
 	for k, v := range data {
 		s.Data[k] = []byte(v)
 	}
@@ -109,10 +109,10 @@ func TestRenderURL(t *testing.T) {
 func TestBuildRequestSecrets(t *testing.T) {
 	const ns = "ns"
 	r := newTestReconciler(t,
-		secret(ns, "auth", map[string]string{"username": "u", "password": "p:w"}),
-		secret(ns, "auth-nopass", map[string]string{"username": "u"}),
-		secret(ns, "hdr", map[string]string{"X-Token": "t"}),
-		secret(ns, "url", map[string]string{"key": "a b"}),
+		secret("auth", map[string]string{"username": "u", "password": "p:w"}),
+		secret("auth-nopass", map[string]string{"username": "u"}),
+		secret("hdr", map[string]string{"X-Token": "t"}),
+		secret("url", map[string]string{"key": "a b"}),
 	)
 	ref := func(n string) *corev1.LocalObjectReference { return &corev1.LocalObjectReference{Name: n} }
 
@@ -183,8 +183,9 @@ func TestChecksForSecret(t *testing.T) {
 		check("elsewhere", "uses-auth", checkSpec{AuthSecretRef: ref("s")}),
 	)
 
-	var got []string
-	for _, req := range r.checksForSecret(context.Background(), secret("ns", "s", nil)) {
+	reqs := r.checksForSecret(context.Background(), secret("s", nil))
+	got := make([]string, 0, len(reqs))
+	for _, req := range reqs {
 		got = append(got, req.String())
 	}
 	slices.Sort(got)
@@ -193,7 +194,7 @@ func TestChecksForSecret(t *testing.T) {
 		t.Errorf("got %q, want %q", got, want)
 	}
 
-	if reqs := r.checksForSecret(context.Background(), secret("ns", "unrelated", nil)); len(reqs) != 0 {
+	if reqs := r.checksForSecret(context.Background(), secret("unrelated", nil)); len(reqs) != 0 {
 		t.Errorf("unrelated secret mapped to %v", reqs)
 	}
 }
