@@ -7,9 +7,12 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 	"time"
 )
+
+const typeHTTP = "http"
 
 func TestClient(t *testing.T) {
 	var gotMethod, gotPath, gotAuth string
@@ -31,11 +34,11 @@ func TestClient(t *testing.T) {
 	ctx := context.Background()
 
 	respBody = `{"check":{"id":42,"name":"x"}}`
-	id, err := c.CreateCheck(ctx, &CheckRequest{Name: "x", Host: "example.com", Type: "http"})
+	id, err := c.CreateCheck(ctx, &CheckRequest{Name: "x", Host: "example.com", Type: typeHTTP})
 	if err != nil || id != 42 {
 		t.Fatalf("create: id=%d err=%v", id, err)
 	}
-	if gotMethod != "POST" || gotPath != "/checks" || gotAuth != "Bearer tok" || gotBody["type"] != "http" {
+	if gotMethod != "POST" || gotPath != "/checks" || gotAuth != "Bearer tok" || gotBody["type"] != typeHTTP {
 		t.Fatalf("create sent %s %s %q %v", gotMethod, gotPath, gotAuth, gotBody)
 	}
 	if v, ok := gotBody["paused"]; !ok || v != false {
@@ -73,5 +76,57 @@ func TestClient(t *testing.T) {
 	respHeader = http.Header{"Req-Limit-Short": {"Remaining: 0 Time until reset: 3589"}}
 	if err := c.DeleteCheck(ctx, 1); !errors.As(err, &perr) || perr.RetryAfter != 3589*time.Second {
 		t.Fatalf("429: %v retryAfter=%v", err, perr)
+	}
+}
+
+func TestBody(t *testing.T) {
+	headers := []string{"A:1", "B:2", "C:3"}
+	httpReq := &CheckRequest{Host: "h", Type: typeHTTP, RequestHeaders: headers}
+
+	m, err := httpReq.body(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]any{"requestheaders": []string{"A:1"}, "requestheaders1": []string{"B:2"}, "requestheaders2": []string{"C:3"}}
+	for k, v := range want {
+		if !reflect.DeepEqual(m[k], v) {
+			t.Errorf("create %s = %v, want %v", k, m[k], v)
+		}
+	}
+	if m["type"] != typeHTTP {
+		t.Errorf("create must send the type, got %v", m["type"])
+	}
+	for _, k := range []string{"postdata", "tags", "teamids"} {
+		if _, ok := m[k]; ok {
+			t.Errorf("create must not send empty %s", k)
+		}
+	}
+
+	m, _ = httpReq.body(true)
+	if _, ok := m["type"]; ok {
+		t.Error("update must not send the type")
+	}
+	for k, v := range want {
+		if !reflect.DeepEqual(m[k], v) {
+			t.Errorf("update %s = %v, want %v", k, m[k], v)
+		}
+	}
+	if m["postdata"] != "" || !reflect.DeepEqual(m["tags"], []string{}) || m["teamids"] != "" {
+		t.Errorf("update must clear unset fields, got %v", m)
+	}
+
+	m, _ = (&CheckRequest{Type: typeHTTP, PostData: "x", Tags: []string{"t"}}).body(true)
+	if m["postdata"] != "x" || !reflect.DeepEqual(m["tags"], []any{"t"}) || !reflect.DeepEqual(m["requestheaders"], []string{}) {
+		t.Errorf("update must keep set fields and clear headers, got %v", m)
+	}
+
+	m, _ = (&CheckRequest{Type: "dns"}).body(true)
+	for _, k := range []string{"postdata", "requestheaders"} {
+		if _, ok := m[k]; ok {
+			t.Errorf("update of a dns check must not send http-only %s (Pingdom answers 400)", k)
+		}
+	}
+	if !reflect.DeepEqual(m["integrationids"], []string{}) || m["custom_message"] != "" {
+		t.Errorf("update of a dns check must clear common fields, got %v", m)
 	}
 }

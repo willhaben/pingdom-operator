@@ -32,6 +32,7 @@ type CheckType string
 // +kubebuilder:validation:XValidation:rule="self.type != 'dns' || (has(self.nameserver) && has(self.expectedIP))",message="nameserver and expectedIP are required for dns checks"
 // +kubebuilder:validation:XValidation:rule="self.type != 'httpcustom' || has(self.url)",message="url is required for httpcustom checks"
 // +kubebuilder:validation:XValidation:rule="!(has(self.shouldContain) && has(self.shouldNotContain))",message="shouldContain and shouldNotContain are mutually exclusive"
+// +kubebuilder:validation:XValidation:rule="!(has(self.url) && has(self.urlTmpl))",message="url and urlTmpl are mutually exclusive"
 type CheckSpec struct {
 	// name of the check in Pingdom. Defaults to the resource name.
 	// +optional
@@ -118,6 +119,16 @@ type CheckSpec struct {
 	// +optional
 	URL string `json:"url,omitempty"`
 
+	// urlTmpl is a Go template for the url, for values that come from a Secret, for example
+	// "/search?key={{ .key | urlquery }}". The variables are the keys of urlTmplSecretRef.
+	// Mutually exclusive with url.
+	// +optional
+	URLTmpl string `json:"urlTmpl,omitempty"`
+
+	// urlTmplSecretRef names a Secret in the same namespace whose keys are the urlTmpl variables.
+	// +optional
+	URLTmplSecretRef *corev1.LocalObjectReference `json:"urlTmplSecretRef,omitempty"`
+
 	// shouldContain is a string the response must contain. Used by http checks.
 	// +optional
 	ShouldContain string `json:"shouldContain,omitempty"`
@@ -133,6 +144,11 @@ type CheckSpec struct {
 	// requestHeaders are custom headers as "Name:value". Used by http checks.
 	// +optional
 	RequestHeaders []string `json:"requestHeaders,omitempty"`
+
+	// requestHeadersSecretRef names a Secret in the same namespace whose keys are header names and
+	// values are header values, for example a token. They are added to requestHeaders and win on a name clash.
+	// +optional
+	RequestHeadersSecretRef *corev1.LocalObjectReference `json:"requestHeadersSecretRef,omitempty"`
 
 	// verifyCertificate treats the target as down on an invalid certificate. Used by http and httpcustom checks.
 	// +optional
@@ -178,6 +194,16 @@ type CheckStatus struct {
 	// observedGeneration is the spec generation last applied to Pingdom.
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+
+	// appliedHash is a hash of the request last sent to Pingdom, including Secret values.
+	// A change, for example a rotated token, triggers a new update.
+	// +optional
+	AppliedHash string `json:"appliedHash,omitempty"`
+
+	// lastSyncTime is when the check was last sent to Pingdom. Older than the resync interval triggers an
+	// update that reverts changes made in the Pingdom UI.
+	// +optional
+	LastSyncTime *metav1.Time `json:"lastSyncTime,omitempty"`
 
 	// conditions represent the current state of the Check resource.
 	//

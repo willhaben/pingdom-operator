@@ -4,9 +4,9 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.22.0
-  name: checks.pingdom.willhaben.at.willhaben.at
+  name: checks.pingdom.willhaben.at
 spec:
-  group: pingdom.willhaben.at.willhaben.at
+  group: pingdom.willhaben.at
   names:
     kind: Check
     listKind: CheckList
@@ -141,6 +141,22 @@ spec:
                 items:
                   type: string
                 type: array
+              requestHeadersSecretRef:
+                description: |-
+                  requestHeadersSecretRef names a Secret in the same namespace whose keys are header names and
+                  values are header values, for example a token. They are added to requestHeaders and win on a name clash.
+                properties:
+                  name:
+                    default: ""
+                    description: |-
+                      Name of the referent.
+                      This field is effectively required, but due to backwards compatibility is
+                      allowed to be empty. Instances of this type with an empty value here are
+                      almost certainly wrong.
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                    type: string
+                type: object
+                x-kubernetes-map-type: atomic
               resolution:
                 description: resolution is how often the check is tested, in minutes.
                 enum:
@@ -217,6 +233,27 @@ spec:
                 description: url is the path on the server. Used by http and httpcustom
                   checks.
                 type: string
+              urlTmpl:
+                description: |-
+                  urlTmpl is a Go template for the url, for values that come from a Secret, for example
+                  "/search?key={{ .key | urlquery }}". The variables are the keys of urlTmplSecretRef.
+                  Mutually exclusive with url.
+                type: string
+              urlTmplSecretRef:
+                description: urlTmplSecretRef names a Secret in the same namespace
+                  whose keys are the urlTmpl variables.
+                properties:
+                  name:
+                    default: ""
+                    description: |-
+                      Name of the referent.
+                      This field is effectively required, but due to backwards compatibility is
+                      allowed to be empty. Instances of this type with an empty value here are
+                      almost certainly wrong.
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                    type: string
+                type: object
+                x-kubernetes-map-type: atomic
               userIDs:
                 description: userIDs are the Pingdom user IDs to alert.
                 items:
@@ -244,9 +281,16 @@ spec:
               rule: self.type != 'httpcustom' || has(self.url)
             - message: shouldContain and shouldNotContain are mutually exclusive
               rule: '!(has(self.shouldContain) && has(self.shouldNotContain))'
+            - message: url and urlTmpl are mutually exclusive
+              rule: '!(has(self.url) && has(self.urlTmpl))'
           status:
             description: status defines the observed state of Check
             properties:
+              appliedHash:
+                description: |-
+                  appliedHash is a hash of the request last sent to Pingdom, including Secret values.
+                  A change, for example a rotated token, triggers a new update.
+                type: string
               checkID:
                 description: checkID is the Pingdom check ID.
                 format: int64
@@ -314,6 +358,12 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              lastSyncTime:
+                description: |-
+                  lastSyncTime is when the check was last sent to Pingdom. Older than the resync interval triggers an
+                  update that reverts changes made in the Pingdom UI.
+                format: date-time
+                type: string
               observedGeneration:
                 description: observedGeneration is the spec generation last applied
                   to Pingdom.

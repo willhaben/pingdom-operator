@@ -6,7 +6,7 @@ sync: it creates it once, updates it when the spec changes, and deletes it when 
 deleted.
 
 ```yaml
-apiVersion: pingdom.willhaben.at.willhaben.at/v1alpha1
+apiVersion: pingdom.willhaben.at/v1alpha1
 kind: Check
 metadata:
   name: www-example-com
@@ -37,6 +37,21 @@ rules.
 - The check `type` is immutable and a finalizer deletes the Pingdom check on resource deletion.
 - Target basic auth for `http`/`httpcustom`/`smtp` checks is read from a Kubernetes `Secret`
   named by `spec.authSecretRef` (keys `username` and `password`).
+- Request headers are plain `"Name:value"` strings in `spec.requestHeaders`. Header values that are
+  secrets (a token, say) come from a `Secret` named by `spec.requestHeadersSecretRef`, whose keys are
+  header names. They are merged with `requestHeaders` and win on a name clash.
+- `spec.urlTmpl` is a Go template for the url, for a value that is a secret. The variables are the keys
+  of the `Secret` named by `spec.urlTmplSecretRef`, e.g. `/search?key={{ .key }}`. It is mutually
+  exclusive with `spec.url`.
+- Changing a referenced `Secret` updates the check in Pingdom (`status.appliedHash`).
+- Every 30 minutes the check is sent to Pingdom again, which reverts edits made in the Pingdom UI.
+  A check deleted in the Pingdom UI is reported as `NotFound`, not recreated.
+- Fields removed from the spec are cleared in Pingdom: `postData`, `customMessage`, `requestHeaders`,
+  `tags`, `probeFilters`, `userIDs`, `teamIDs` and `integrationIDs`. Numbers, booleans, `url`,
+  `shouldContain` and `shouldNotContain` keep their last value, so set them explicitly.
+- To take over a check that already exists in Pingdom (for example one created by Terraform), set the
+  annotation `pingdom.willhaben.at/check-id: "<id>"` before applying. The check is updated in place
+  instead of creating a duplicate, and is deleted from Pingdom when the resource is deleted.
 
 To avoid deleting and recreating checks on every change, edit `spec` in place and let the operator
 update Pingdom.

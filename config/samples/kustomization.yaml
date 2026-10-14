@@ -1,4 +1,4 @@
 ## Append samples of your project ##
 resources:
-- pingdom.willhaben.at_v1alpha1_check.yaml
+- pingdom_v1alpha1_check.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples

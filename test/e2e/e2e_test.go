@@ -294,7 +294,7 @@ var _ = Describe("Manager", Ordered, func() {
 			name := fmt.Sprintf("e2e-check-%d", time.Now().Unix())
 			manifest := func(name string, resolution int) string {
 				// paused so the test never triggers real alerts
-				return fmt.Sprintf(`apiVersion: pingdom.willhaben.at.willhaben.at/v1alpha1
+				return fmt.Sprintf(`apiVersion: pingdom.willhaben.at/v1alpha1
 kind: Check
 metadata:
   name: %s
@@ -317,14 +317,14 @@ spec:
 				Expect(err).NotTo(HaveOccurred())
 			}
 			jsonpath := func(g Gomega, name, path string) string {
-				cmd := exec.Command("kubectl", "get", "checks.pingdom.willhaben.at.willhaben.at", name,
+				cmd := exec.Command("kubectl", "get", "checks.pingdom.willhaben.at", name,
 					"-n", namespace, "-o", "jsonpath="+path)
 				out, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
 				return strings.TrimSpace(out)
 			}
 			DeferCleanup(func() {
-				cmd := exec.Command("kubectl", "delete", "checks.pingdom.willhaben.at.willhaben.at", name,
+				cmd := exec.Command("kubectl", "delete", "checks.pingdom.willhaben.at", name,
 					"-n", namespace, "--ignore-not-found", "--timeout=2m")
 				_, _ = utils.Run(cmd)
 			})
@@ -354,7 +354,7 @@ spec:
 			}).Should(Succeed())
 
 			By("deleting the Check")
-			cmd := exec.Command("kubectl", "delete", "checks.pingdom.willhaben.at.willhaben.at", name,
+			cmd := exec.Command("kubectl", "delete", "checks.pingdom.willhaben.at", name,
 				"-n", namespace, "--timeout=2m")
 			_, err := utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred())
@@ -374,11 +374,11 @@ spec:
 			code, _ = pingdomDo(http.MethodDelete, token, goneID)
 			Expect(code).To(Equal(http.StatusOK))
 			DeferCleanup(func() {
-				cmd := exec.Command("kubectl", "delete", "checks.pingdom.willhaben.at.willhaben.at", gone,
+				cmd := exec.Command("kubectl", "delete", "checks.pingdom.willhaben.at", gone,
 					"-n", namespace, "--ignore-not-found", "--timeout=2m")
 				_, _ = utils.Run(cmd)
 			})
-			cmd = exec.Command("kubectl", "delete", "checks.pingdom.willhaben.at.willhaben.at", gone,
+			cmd = exec.Command("kubectl", "delete", "checks.pingdom.willhaben.at", gone,
 				"-n", namespace, "--timeout=2m")
 			_, err = utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred(), "deletion must finish even though Pingdom no longer has the check")
