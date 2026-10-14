@@ -81,7 +81,7 @@ var _ = Describe("Check Controller", func() {
 
 	BeforeEach(func() {
 		fake = &fakePingdom{}
-		reconciler = &CheckReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), Pingdom: fake}
+		reconciler = &CheckReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), Pingdom: fake, APIReader: k8sClient}
 		Expect(k8sClient.Create(ctx, &pingdomwillhabenatv1alpha1.Check{
 			ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: key.Namespace},
 			Spec:       pingdomwillhabenatv1alpha1.CheckSpec{Host: "example.com", Type: "http"},

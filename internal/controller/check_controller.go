@@ -80,6 +80,9 @@ type CheckReconciler struct {
 	client.Client
 	Scheme  *runtime.Scheme
 	Pingdom PingdomClient
+	// APIReader reads straight from the API server. The cached client can lag behind our own
+	// status write, which would make a second reconcile create a duplicate Pingdom check.
+	APIReader client.Reader
 }
 
 // +kubebuilder:rbac:groups=pingdom.willhaben.at,resources=checks,verbs=get;list;watch;create;update;patch;delete
@@ -99,7 +102,7 @@ func (r *CheckReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	log := logf.FromContext(ctx)
 
 	check := &pingdomwillhabenatv1alpha1.Check{}
-	if err := r.Get(ctx, req.NamespacedName, check); err != nil {
+	if err := r.APIReader.Get(ctx, req.NamespacedName, check); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
