@@ -390,6 +390,73 @@ spec:
 			}
 		})
 
+		It("should report a missing or incomplete auth Secret and recover when it is fixed", func() {
+			name := fmt.Sprintf("e2e-secret-%d", time.Now().Unix())
+			secretName := name + "-auth"
+			kubectlApply := func(m string) {
+				cmd := exec.Command("kubectl", "apply", "-f", "-")
+				cmd.Stdin = strings.NewReader(m)
+				_, err := utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred())
+			}
+			ready := func(g Gomega, field string) string {
+				cmd := exec.Command("kubectl", "get", "checks.pingdom.willhaben.at", name, "-n", namespace,
+					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')]."+field+"}")
+				out, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				return strings.TrimSpace(out)
+			}
+			secretManifest := func(data string) string {
+				return fmt.Sprintf(`apiVersion: v1
+kind: Secret
+metadata:
+  name: %s
+  namespace: %s
+stringData:
+%s
+`, secretName, namespace, data)
+			}
+			DeferCleanup(func() {
+				for _, args := range [][]string{
+					{"delete", "checks.pingdom.willhaben.at", name, "-n", namespace, "--ignore-not-found", "--timeout=2m"},
+					{"delete", "secret", secretName, "-n", namespace, "--ignore-not-found"},
+				} {
+					_, _ = utils.Run(exec.Command("kubectl", args...))
+				}
+			})
+
+			By("creating a paused Check that references a Secret that does not exist")
+			kubectlApply(fmt.Sprintf(`apiVersion: pingdom.willhaben.at/v1alpha1
+kind: Check
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  host: example.com
+  type: http
+  paused: true
+  authSecretRef:
+    name: %s
+`, name, namespace, secretName))
+			Eventually(func(g Gomega) {
+				g.Expect(ready(g, "reason")).To(Equal("SecretUnavailable"))
+				g.Expect(ready(g, "message")).To(ContainSubstring("not found"))
+			}).Should(Succeed())
+
+			By("creating the Secret without a password")
+			kubectlApply(secretManifest("  username: u"))
+			Eventually(func(g Gomega) {
+				g.Expect(ready(g, "message")).To(ContainSubstring("needs keys username and password"))
+			}).Should(Succeed())
+
+			By("adding the password, which the Secret watch must pick up")
+			kubectlApply(secretManifest("  username: u\n  password: p"))
+			Eventually(func(g Gomega) {
+				g.Expect(ready(g, "reason")).NotTo(Equal("SecretUnavailable"))
+				g.Expect(ready(g, "reason")).NotTo(BeEmpty())
+			}).Should(Succeed())
+		})
+
 		// TODO: Customize the e2e test suite with scenarios specific to your project.
 		// Consider applying sample/CR(s) and check their status and/or verifying
 		// the reconciliation by using the metrics, i.e.:
