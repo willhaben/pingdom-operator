@@ -1,0 +1,9 @@
+apiVersion: pingdom.willhaben.at.willhaben.at/v1alpha1
+kind: Check
+metadata:
+  labels:
+    app.kubernetes.io/name: pingdom-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: check-sample
+spec:
+  # TODO(user): Add fields here
