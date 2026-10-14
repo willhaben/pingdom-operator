@@ -1,121 +1,154 @@
 # pingdom-operator
-// TODO(user): Add simple overview of use/purpose
 
-## Description
-// TODO(user): An in-depth paragraph about your project and overview of use
+A Kubernetes operator that manages [Pingdom](https://www.pingdom.com/) uptime checks as native
+Kubernetes resources. You declare a `Check`, and the operator keeps the matching check in Pingdom in
+sync: it creates it once, updates it when the spec changes, and deletes it when the resource is
+deleted.
 
-## Getting Started
+```yaml
+apiVersion: pingdom.willhaben.at.willhaben.at/v1alpha1
+kind: Check
+metadata:
+  name: www-example-com
+spec:
+  host: www.example.com
+  type: http
+  url: /
+  encryption: true
+  port: 443
+  resolution: 5
+  tags:
+    - managed-by-operator
+```
 
-### Prerequisites
+## How it works
+
+The `Check` spec mirrors the Pingdom API 3.1 `POST /checks` body, so most Pingdom fields are
+available directly (`type`, `host`, `resolution`, `tags`, `probeFilters`, HTTP specifics, DNS/TCP/UDP
+options, notification settings, and so on). See
+[`api/v1alpha1/check_types.go`](api/v1alpha1/check_types.go) for the full field list and validation
+rules.
+
+- The reconciler is idempotent: it creates the Pingdom check only once and records the returned
+  `status.checkID`. Later spec changes become `PUT /checks/{id}` updates.
+- `status.observedGeneration` tracks the last spec generation applied to Pingdom. A `Ready`
+  condition reports `True` when the check matches the spec, or `False` with a reason
+  (`InvalidSpec`, `Unauthorized`, `RateLimited`, `PingdomUnavailable`, …).
+- The check `type` is immutable and a finalizer deletes the Pingdom check on resource deletion.
+- Target basic auth for `http`/`httpcustom`/`smtp` checks is read from a Kubernetes `Secret`
+  named by `spec.authSecretRef` (keys `username` and `password`).
+
+To avoid deleting and recreating checks on every change, edit `spec` in place and let the operator
+update Pingdom.
+
+## Prerequisites
+
 - go version v1.24.6+
-- docker version 17.03+.
-- kubectl version v1.11.3+.
-- Access to a Kubernetes v1.11.3+ cluster.
+- docker version 17.03+
+- kubectl version v1.11.3+
+- Access to a Kubernetes v1.11.3+ cluster
+- A Pingdom API token
 
-### To Deploy on the cluster
-**Build and push your image to the location specified by `IMG`:**
+## Configuration
+
+The operator authenticates to Pingdom with the `PINGDOM_API_TOKEN` environment variable. In the
+default deployment it is read from a Secret named `pingdom-api-token`:
+
+```sh
+kubectl create secret generic pingdom-api-token \
+  --namespace pingdom-operator-system \
+  --from-literal=token=<your-pingdom-api-token>
+```
+
+## Getting started
+
+### Run locally
+
+```sh
+make install   # install the CRDs into the cluster
+make run       # run the manager against the current kubeconfig context
+```
+
+`make run` reads `PINGDOM_API_TOKEN` from your shell, so export it first:
+
+```sh
+export PINGDOM_API_TOKEN=<your-pingdom-api-token>
+```
+
+### Develop
+
+```sh
+make manifests generate   # regenerate CRDs, RBAC and DeepCopy after changing types/markers
+make lint-fix             # auto-fix code style
+make test                 # unit tests (envtest: real API server + etcd)
+```
+
+## Deploy on a cluster
+
+**Build and push the image** to the location specified by `IMG`:
 
 ```sh
 make docker-build docker-push IMG=<some-registry>/pingdom-operator:tag
 ```
 
-**NOTE:** This image ought to be published in the personal registry you specified.
-And it is required to have access to pull the image from the working environment.
-Make sure you have the proper permission to the registry if the above commands don’t work.
-
-**Install the CRDs into the cluster:**
+**Install the CRDs:**
 
 ```sh
 make install
 ```
 
-**Deploy the Manager to the cluster with the image specified by `IMG`:**
+**Deploy the manager with that image:**
 
 ```sh
 make deploy IMG=<some-registry>/pingdom-operator:tag
 ```
 
-> **NOTE**: If you encounter RBAC errors, you may need to grant yourself cluster-admin
-privileges or be logged in as admin.
+> If you encounter RBAC errors, you may need to grant yourself cluster-admin privileges or be
+> logged in as admin.
 
-**Create instances of your solution**
-You can apply the samples (examples) from the config/sample:
+**Apply the sample Check:**
 
 ```sh
 kubectl apply -k config/samples/
 ```
 
->**NOTE**: Ensure that the samples has default values to test it out.
-
-### To Uninstall
-**Delete the instances (CRs) from the cluster:**
+### Uninstall
 
 ```sh
-kubectl delete -k config/samples/
+kubectl delete -k config/samples/   # delete the Check resources (and their Pingdom checks)
+make uninstall                      # delete the CRDs from the cluster
+make undeploy                       # remove the controller from the cluster
 ```
 
-**Delete the APIs(CRDs) from the cluster:**
+## Distribution
 
-```sh
-make uninstall
-```
-
-**UnDeploy the controller from the cluster:**
-
-```sh
-make undeploy
-```
-
-## Project Distribution
-
-Following the options to release and provide this solution to the users.
-
-### By providing a bundle with all YAML files
-
-1. Build the installer for the image built and published in the registry:
+### YAML bundle
 
 ```sh
 make build-installer IMG=<some-registry>/pingdom-operator:tag
 ```
 
-**NOTE:** The makefile target mentioned above generates an 'install.yaml'
-file in the dist directory. This file contains all the resources built
-with Kustomize, which are necessary to install this project without its
-dependencies.
-
-2. Using the installer
-
-Users can just run 'kubectl apply -f <URL for YAML BUNDLE>' to install
-the project, i.e.:
+This generates `dist/install.yaml` with all resources (CRDs, RBAC, Deployment) needed to install the
+project without extra tooling. Users can apply it directly:
 
 ```sh
 kubectl apply -f https://raw.githubusercontent.com/<org>/pingdom-operator/<tag or branch>/dist/install.yaml
 ```
 
-### By providing a Helm Chart
-
-1. Build the chart using the optional helm plugin
+### Helm chart
 
 ```sh
-kubebuilder edit --plugins=helm/v2-alpha
+kubebuilder edit --plugins=helm/v2-alpha   # generates dist/chart
 ```
 
-2. See that a chart was generated under 'dist/chart', and users
-can obtain this solution from there.
-
-**NOTE:** If you change the project, you need to update the Helm Chart
-using the same command above to sync the latest changes. Furthermore,
-if you create webhooks, you need to use the above command with
-the '--force' flag and manually ensure that any custom configuration
-previously added to 'dist/chart/values.yaml' or 'dist/chart/manager/manager.yaml'
-is manually re-applied afterwards.
+If you change the project afterwards, re-run the same command to sync the chart; when webhooks are
+involved, use `--force` and manually re-apply any customizations you made to `dist/chart/values.yaml`
+or `dist/chart/manager/manager.yaml`.
 
 ## Contributing
-// TODO(user): Add detailed information on how you would like others to contribute to this project
 
-**NOTE:** Run `make help` for more information on all potential `make` targets
-
-More information can be found via the [Kubebuilder Documentation](https://book.kubebuilder.io/introduction.html)
+Run `make help` for the full list of make targets. More background on operator patterns is in the
+[Kubebuilder documentation](https://book.kubebuilder.io/introduction.html).
 
 ## License
 
@@ -132,4 +165,3 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
-
