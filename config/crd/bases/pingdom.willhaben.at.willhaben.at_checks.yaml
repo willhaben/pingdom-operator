@@ -14,7 +14,23 @@ spec:
     singular: check
   scope: Namespaced
   versions:
-  - name: v1alpha1
+  - additionalPrinterColumns:
+    - jsonPath: .spec.type
+      name: Type
+      type: string
+    - jsonPath: .spec.host
+      name: Host
+      type: string
+    - jsonPath: .status.checkID
+      name: ID
+      type: integer
+    - jsonPath: .status.conditions[?(@.type=='Ready')].status
+      name: Ready
+      type: string
+    - jsonPath: .status.conditions[?(@.type=='Ready')].reason
+      name: Reason
+      type: string
+    name: v1alpha1
     schema:
       openAPIV3Schema:
         description: Check is the Schema for the checks API
@@ -39,25 +55,207 @@ spec:
           spec:
             description: spec defines the desired state of Check
             properties:
-              foo:
-                description: foo is an example field of Check. Edit check_types.go
-                  to remove/update
+              additionalURLs:
+                description: additionalURLs is the full URL of an additional XML file.
+                  Used by httpcustom checks.
                 type: string
+              authSecretRef:
+                description: |-
+                  authSecretRef names a Secret in the same namespace with keys "username" and "password",
+                  used for target authentication by http, httpcustom and smtp checks.
+                properties:
+                  name:
+                    default: ""
+                    description: |-
+                      Name of the referent.
+                      This field is effectively required, but due to backwards compatibility is
+                      allowed to be empty. Instances of this type with an empty value here are
+                      almost certainly wrong.
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                    type: string
+                type: object
+                x-kubernetes-map-type: atomic
+              customMessage:
+                description: customMessage is added to email and webhook alerts.
+                type: string
+              encryption:
+                description: encryption enables TLS. Used by http, httpcustom and
+                  smtp checks.
+                type: boolean
+              expectedIP:
+                description: expectedIP is the IP the DNS server must return. Used
+                  by dns checks.
+                type: string
+              host:
+                description: host is the target host.
+                minLength: 1
+                type: string
+              integrationIDs:
+                description: integrationIDs are the Pingdom integration IDs to alert.
+                items:
+                  format: int64
+                  type: integer
+                type: array
+              ipv6:
+                description: ipv6 uses IPv6 instead of IPv4.
+                type: boolean
+              name:
+                description: name of the check in Pingdom. Defaults to the resource
+                  name.
+                type: string
+              nameserver:
+                description: nameserver is the DNS server to query. Used by dns checks.
+                type: string
+              notifyAgainEvery:
+                description: notifyAgainEvery re-notifies every n results. 0 means
+                  no extra notifications.
+                format: int32
+                minimum: 0
+                type: integer
+              notifyWhenBackUp:
+                description: notifyWhenBackUp sends a notification when the check
+                  is up again.
+                type: boolean
+              paused:
+                description: paused pauses the check.
+                type: boolean
+              port:
+                description: port of the target. Used by http, httpcustom, tcp, udp,
+                  smtp, pop3 and imap checks.
+                format: int32
+                maximum: 65535
+                minimum: 1
+                type: integer
+              postData:
+                description: postData is sent as the request body. Used by http checks.
+                type: string
+              probeFilters:
+                description: 'probeFilters selects probes, for example "region: NA".
+                  Only region (EU, NA, APAC, LATAM) is supported.'
+                items:
+                  type: string
+                type: array
+              requestHeaders:
+                description: requestHeaders are custom headers as "Name:value". Used
+                  by http checks.
+                items:
+                  type: string
+                type: array
+              resolution:
+                description: resolution is how often the check is tested, in minutes.
+                enum:
+                - 1
+                - 5
+                - 15
+                - 30
+                - 60
+                format: int32
+                type: integer
+              responseTimeThreshold:
+                description: responseTimeThreshold triggers a down alert above this
+                  response time in ms (not on Starter and Free plans).
+                format: int32
+                minimum: 1
+                type: integer
+              sendNotificationWhenDown:
+                description: sendNotificationWhenDown sends a notification after the
+                  check was down this many times.
+                format: int32
+                minimum: 0
+                type: integer
+              shouldContain:
+                description: shouldContain is a string the response must contain.
+                  Used by http checks.
+                type: string
+              shouldNotContain:
+                description: shouldNotContain is a string the response must not contain.
+                  Used by http checks.
+                type: string
+              sslDownDaysBefore:
+                description: sslDownDaysBefore treats the target as down if the certificate
+                  expires within this many days.
+                format: int32
+                minimum: 0
+                type: integer
+              stringToExpect:
+                description: stringToExpect must appear in the response. Used by tcp,
+                  udp, smtp, pop3 and imap checks.
+                type: string
+              stringToSend:
+                description: stringToSend is sent to the target. Used by tcp and udp
+                  checks.
+                type: string
+              tags:
+                description: tags of the check. Max 64 characters each.
+                items:
+                  maxLength: 64
+                  type: string
+                type: array
+              teamIDs:
+                description: teamIDs are the Pingdom team IDs to alert.
+                items:
+                  format: int64
+                  type: integer
+                type: array
+              type:
+                description: type of the check. It cannot be changed after creation.
+                enum:
+                - http
+                - httpcustom
+                - tcp
+                - ping
+                - dns
+                - udp
+                - smtp
+                - pop3
+                - imap
+                type: string
+                x-kubernetes-validations:
+                - message: type is immutable
+                  rule: self == oldSelf
+              url:
+                description: url is the path on the server. Used by http and httpcustom
+                  checks.
+                type: string
+              userIDs:
+                description: userIDs are the Pingdom user IDs to alert.
+                items:
+                  format: int64
+                  type: integer
+                type: array
+              verifyCertificate:
+                description: verifyCertificate treats the target as down on an invalid
+                  certificate. Used by http and httpcustom checks.
+                type: boolean
+            required:
+            - host
+            - type
             type: object
+            x-kubernetes-validations:
+            - message: port is required for tcp checks
+              rule: self.type != 'tcp' || has(self.port)
+            - message: port, stringToSend and stringToExpect are required for udp
+                checks
+              rule: self.type != 'udp' || (has(self.port) && has(self.stringToSend)
+                && has(self.stringToExpect))
+            - message: nameserver and expectedIP are required for dns checks
+              rule: self.type != 'dns' || (has(self.nameserver) && has(self.expectedIP))
+            - message: url is required for httpcustom checks
+              rule: self.type != 'httpcustom' || has(self.url)
+            - message: shouldContain and shouldNotContain are mutually exclusive
+              rule: '!(has(self.shouldContain) && has(self.shouldNotContain))'
           status:
             description: status defines the observed state of Check
             properties:
+              checkID:
+                description: checkID is the Pingdom check ID.
+                format: int64
+                type: integer
               conditions:
                 description: |-
                   conditions represent the current state of the Check resource.
-                  Each condition has a unique type and reflects the status of a specific aspect of the resource.
 
-                  Standard condition types include:
-                  - "Available": the resource is fully functional
-                  - "Progressing": the resource is being created or updated
-                  - "Degraded": the resource failed to reach or maintain its desired state
-
-                  The status of each condition is one of True, False, or Unknown.
+                  The "Ready" condition is True when the check in Pingdom matches the spec.
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -116,6 +314,11 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              observedGeneration:
+                description: observedGeneration is the spec generation last applied
+                  to Pingdom.
+                format: int64
+                type: integer
             type: object
         required:
         - spec

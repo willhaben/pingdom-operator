@@ -17,42 +17,171 @@ limitations under the License.
 package v1alpha1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
-// EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
-// NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
+// CheckType is the Pingdom check type.
+// +kubebuilder:validation:Enum=http;httpcustom;tcp;ping;dns;udp;smtp;pop3;imap
+type CheckType string
 
-// CheckSpec defines the desired state of Check
+// CheckSpec defines the desired state of Check, mirroring the Pingdom API 3.1 POST /checks body.
+// +kubebuilder:validation:XValidation:rule="self.type != 'tcp' || has(self.port)",message="port is required for tcp checks"
+// +kubebuilder:validation:XValidation:rule="self.type != 'udp' || (has(self.port) && has(self.stringToSend) && has(self.stringToExpect))",message="port, stringToSend and stringToExpect are required for udp checks"
+// +kubebuilder:validation:XValidation:rule="self.type != 'dns' || (has(self.nameserver) && has(self.expectedIP))",message="nameserver and expectedIP are required for dns checks"
+// +kubebuilder:validation:XValidation:rule="self.type != 'httpcustom' || has(self.url)",message="url is required for httpcustom checks"
+// +kubebuilder:validation:XValidation:rule="!(has(self.shouldContain) && has(self.shouldNotContain))",message="shouldContain and shouldNotContain are mutually exclusive"
 type CheckSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-	// The following markers will use OpenAPI v3 schema to validate the value
-	// More info: https://book.kubebuilder.io/reference/markers/crd-validation.html
-
-	// foo is an example field of Check. Edit check_types.go to remove/update
+	// name of the check in Pingdom. Defaults to the resource name.
 	// +optional
-	Foo *string `json:"foo,omitempty"`
+	Name string `json:"name,omitempty"`
+
+	// host is the target host.
+	// +kubebuilder:validation:MinLength=1
+	// +required
+	Host string `json:"host"`
+
+	// type of the check. It cannot be changed after creation.
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="type is immutable"
+	// +required
+	Type CheckType `json:"type"`
+
+	// paused pauses the check.
+	// +optional
+	Paused bool `json:"paused,omitempty"`
+
+	// resolution is how often the check is tested, in minutes.
+	// +kubebuilder:validation:Enum=1;5;15;30;60
+	// +optional
+	Resolution *int32 `json:"resolution,omitempty"`
+
+	// userIDs are the Pingdom user IDs to alert.
+	// +optional
+	UserIDs []int64 `json:"userIDs,omitempty"`
+
+	// teamIDs are the Pingdom team IDs to alert.
+	// +optional
+	TeamIDs []int64 `json:"teamIDs,omitempty"`
+
+	// integrationIDs are the Pingdom integration IDs to alert.
+	// +optional
+	IntegrationIDs []int64 `json:"integrationIDs,omitempty"`
+
+	// sendNotificationWhenDown sends a notification after the check was down this many times.
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	SendNotificationWhenDown *int32 `json:"sendNotificationWhenDown,omitempty"`
+
+	// notifyAgainEvery re-notifies every n results. 0 means no extra notifications.
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	NotifyAgainEvery *int32 `json:"notifyAgainEvery,omitempty"`
+
+	// notifyWhenBackUp sends a notification when the check is up again.
+	// +optional
+	NotifyWhenBackUp *bool `json:"notifyWhenBackUp,omitempty"`
+
+	// tags of the check. Max 64 characters each.
+	// +kubebuilder:validation:items:MaxLength=64
+	// +optional
+	Tags []string `json:"tags,omitempty"`
+
+	// probeFilters selects probes, for example "region: NA". Only region (EU, NA, APAC, LATAM) is supported.
+	// +optional
+	ProbeFilters []string `json:"probeFilters,omitempty"`
+
+	// ipv6 uses IPv6 instead of IPv4.
+	// +optional
+	IPv6 *bool `json:"ipv6,omitempty"`
+
+	// responseTimeThreshold triggers a down alert above this response time in ms (not on Starter and Free plans).
+	// +kubebuilder:validation:Minimum=1
+	// +optional
+	ResponseTimeThreshold *int32 `json:"responseTimeThreshold,omitempty"`
+
+	// customMessage is added to email and webhook alerts.
+	// +optional
+	CustomMessage string `json:"customMessage,omitempty"`
+
+	// port of the target. Used by http, httpcustom, tcp, udp, smtp, pop3 and imap checks.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	// +optional
+	Port *int32 `json:"port,omitempty"`
+
+	// encryption enables TLS. Used by http, httpcustom and smtp checks.
+	// +optional
+	Encryption *bool `json:"encryption,omitempty"`
+
+	// url is the path on the server. Used by http and httpcustom checks.
+	// +optional
+	URL string `json:"url,omitempty"`
+
+	// shouldContain is a string the response must contain. Used by http checks.
+	// +optional
+	ShouldContain string `json:"shouldContain,omitempty"`
+
+	// shouldNotContain is a string the response must not contain. Used by http checks.
+	// +optional
+	ShouldNotContain string `json:"shouldNotContain,omitempty"`
+
+	// postData is sent as the request body. Used by http checks.
+	// +optional
+	PostData string `json:"postData,omitempty"`
+
+	// requestHeaders are custom headers as "Name:value". Used by http checks.
+	// +optional
+	RequestHeaders []string `json:"requestHeaders,omitempty"`
+
+	// verifyCertificate treats the target as down on an invalid certificate. Used by http and httpcustom checks.
+	// +optional
+	VerifyCertificate *bool `json:"verifyCertificate,omitempty"`
+
+	// sslDownDaysBefore treats the target as down if the certificate expires within this many days.
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	SSLDownDaysBefore *int32 `json:"sslDownDaysBefore,omitempty"`
+
+	// additionalURLs is the full URL of an additional XML file. Used by httpcustom checks.
+	// +optional
+	AdditionalURLs string `json:"additionalURLs,omitempty"`
+
+	// stringToSend is sent to the target. Used by tcp and udp checks.
+	// +optional
+	StringToSend string `json:"stringToSend,omitempty"`
+
+	// stringToExpect must appear in the response. Used by tcp, udp, smtp, pop3 and imap checks.
+	// +optional
+	StringToExpect string `json:"stringToExpect,omitempty"`
+
+	// nameserver is the DNS server to query. Used by dns checks.
+	// +optional
+	Nameserver string `json:"nameserver,omitempty"`
+
+	// expectedIP is the IP the DNS server must return. Used by dns checks.
+	// +optional
+	ExpectedIP string `json:"expectedIP,omitempty"`
+
+	// authSecretRef names a Secret in the same namespace with keys "username" and "password",
+	// used for target authentication by http, httpcustom and smtp checks.
+	// +optional
+	AuthSecretRef *corev1.LocalObjectReference `json:"authSecretRef,omitempty"`
 }
 
 // CheckStatus defines the observed state of Check.
 type CheckStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
+	// checkID is the Pingdom check ID.
+	// +optional
+	CheckID *int64 `json:"checkID,omitempty"`
 
-	// For Kubernetes API conventions, see:
-	// https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#typical-status-properties
+	// observedGeneration is the spec generation last applied to Pingdom.
+	// +optional
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 
 	// conditions represent the current state of the Check resource.
-	// Each condition has a unique type and reflects the status of a specific aspect of the resource.
 	//
-	// Standard condition types include:
-	// - "Available": the resource is fully functional
-	// - "Progressing": the resource is being created or updated
-	// - "Degraded": the resource failed to reach or maintain its desired state
-	//
-	// The status of each condition is one of True, False, or Unknown.
+	// The "Ready" condition is True when the check in Pingdom matches the spec.
 	// +listType=map
 	// +listMapKey=type
 	// +optional
@@ -61,6 +190,11 @@ type CheckStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:printcolumn:name="Type",type=string,JSONPath=".spec.type"
+// +kubebuilder:printcolumn:name="Host",type=string,JSONPath=".spec.host"
+// +kubebuilder:printcolumn:name="ID",type=integer,JSONPath=".status.checkID"
+// +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=".status.conditions[?(@.type=='Ready')].status"
+// +kubebuilder:printcolumn:name="Reason",type=string,JSONPath=".status.conditions[?(@.type=='Ready')].reason"
 
 // Check is the Schema for the checks API
 type Check struct {

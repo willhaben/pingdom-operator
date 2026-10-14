@@ -65,6 +65,12 @@ spec:
           - --health-probe-bind-address=:8081
         image: controller:latest
         name: manager
+        env:
+        - name: PINGDOM_API_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: pingdom-api-token
+              key: token
         ports:
         - containerPort: 8081
           name: health
