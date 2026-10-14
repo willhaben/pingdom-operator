@@ -1,0 +1,63 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended"
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Update tool versions in the Makefile",
+      "managerFilePatterns": [
+        "/^Makefile$/"
+      ],
+      "matchStrings": [
+        "KUSTOMIZE_VERSION \\?= (?<currentValue>v\\S+)"
+      ],
+      "depNameTemplate": "kubernetes-sigs/kustomize",
+      "datasourceTemplate": "github-releases",
+      "extractVersionTemplate": "^kustomize/(?<version>.+)$"
+    },
+    {
+      "customType": "regex",
+      "description": "Update controller-tools version in the Makefile",
+      "managerFilePatterns": [
+        "/^Makefile$/"
+      ],
+      "matchStrings": [
+        "CONTROLLER_TOOLS_VERSION \\?= (?<currentValue>v\\S+)"
+      ],
+      "depNameTemplate": "kubernetes-sigs/controller-tools",
+      "datasourceTemplate": "github-releases"
+    },
+    {
+      "customType": "regex",
+      "description": "Update golangci-lint version in the Makefile and .custom-gcl.yml",
+      "managerFilePatterns": [
+        "/^Makefile$/",
+        "/^\\.custom-gcl\\.yml$/"
+      ],
+      "matchStrings": [
+        "GOLANGCI_LINT_VERSION \\?= (?<currentValue>v\\S+)",
+        "^version: (?<currentValue>v\\S+)"
+      ],
+      "depNameTemplate": "golangci/golangci-lint",
+      "datasourceTemplate": "github-releases"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "Group all Go module dependency updates",
+      "matchManagers": [
+        "gomod"
+      ],
+      "groupName": "go dependencies"
+    },
+    {
+      "description": "Group all Dockerfile updates",
+      "matchManagers": [
+        "dockerfile"
+      ],
+      "groupName": "dockerfile"
+    }
+  ]
+}
