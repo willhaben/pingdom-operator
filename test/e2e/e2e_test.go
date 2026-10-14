@@ -73,8 +73,8 @@ var _ = Describe("Manager", Ordered, func() {
 		}
 		tokenFile := filepath.Join(GinkgoT().TempDir(), "token")
 		Expect(os.WriteFile(tokenFile, []byte(token), 0o600)).To(Succeed())
-		cmd = exec.Command("kubectl", "create", "secret", "generic", "pingdom-api-token",
-			"-n", namespace, "--from-file=token="+tokenFile)
+		cmd = exec.Command("kubectl", "create", "secret", "generic", "pingdom-controller-manager",
+			"-n", namespace, "--from-file=pingdom-api-token="+tokenFile)
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to create the Pingdom token Secret")
 
