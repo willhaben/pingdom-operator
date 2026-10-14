@@ -69,8 +69,8 @@ spec:
         - name: PINGDOM_API_TOKEN
           valueFrom:
             secretKeyRef:
-              name: pingdom-api-token
-              key: token
+              name: pingdom-controller-manager
+              key: pingdom-api-token
         ports:
         - containerPort: 8081
           name: health

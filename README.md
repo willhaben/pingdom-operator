@@ -52,12 +52,12 @@ update Pingdom.
 ## Configuration
 
 The operator authenticates to Pingdom with the `PINGDOM_API_TOKEN` environment variable. In the
-default deployment it is read from a Secret named `pingdom-api-token`:
+default deployment it is read from a Secret named `pingdom-controller-manager` (key `pingdom-api-token`):
 
 ```sh
-kubectl create secret generic pingdom-api-token \
-  --namespace pingdom-operator-system \
-  --from-literal=token=<your-pingdom-api-token>
+kubectl create secret generic pingdom-controller-manager \
+  --namespace pingdom-operator \
+  --from-literal=pingdom-api-token=<your-pingdom-api-token>
 ```
 
 ## Getting started
