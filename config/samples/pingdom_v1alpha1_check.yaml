@@ -1,4 +1,4 @@
-apiVersion: pingdom.willhaben.at.willhaben.at/v1alpha1
+apiVersion: pingdom.willhaben.at/v1alpha1
 kind: Check
 metadata:
   labels:

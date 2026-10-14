@@ -13,7 +13,7 @@ rules:
   - list
   - watch
 - apiGroups:
-  - pingdom.willhaben.at.willhaben.at
+  - pingdom.willhaben.at
   resources:
   - checks
   verbs:
@@ -25,13 +25,13 @@ rules:
   - update
   - watch
 - apiGroups:
-  - pingdom.willhaben.at.willhaben.at
+  - pingdom.willhaben.at
   resources:
   - checks/finalizers
   verbs:
   - update
 - apiGroups:
-  - pingdom.willhaben.at.willhaben.at
+  - pingdom.willhaben.at
   resources:
   - checks/status
   verbs:

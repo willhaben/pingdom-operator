@@ -7,13 +7,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 )
 
 const DefaultBaseURL = "https://api.pingdom.com/api/3.1"
 
-// CheckRequest is the body of POST /checks and PUT /checks/{id}.
-// Omitted fields are left unchanged by Pingdom on update.
+// CheckRequest is the desired state of a check. Pingdom leaves omitted fields unchanged on update,
+// so UpdateCheck sends explicit empty values for clearable fields (see body).
 type CheckRequest struct {
 	Name                     string   `json:"name,omitempty"`
 	Host                     string   `json:"host,omitempty"`
@@ -83,14 +84,64 @@ func (c *Client) CreateCheck(ctx context.Context, req *CheckRequest) (int64, err
 			ID int64 `json:"id"`
 		} `json:"check"`
 	}
-	if err := c.do(ctx, http.MethodPost, "/checks", req, &out); err != nil {
+	body, err := req.body(false)
+	if err != nil {
+		return 0, err
+	}
+	if err := c.do(ctx, http.MethodPost, "/checks", body, &out); err != nil {
 		return 0, err
 	}
 	return out.Check.ID, nil
 }
 
 func (c *Client) UpdateCheck(ctx context.Context, id int64, req *CheckRequest) error {
-	return c.do(ctx, http.MethodPut, fmt.Sprintf("/checks/%d", id), req, nil)
+	body, err := req.body(true)
+	if err != nil {
+		return err
+	}
+	return c.do(ctx, http.MethodPut, fmt.Sprintf("/checks/%d", id), body, nil)
+}
+
+// body builds the JSON body. Pingdom folds a multi-entry requestheaders array into a single header, so
+// headers are sent as requestheaders, requestheaders1, ... with one entry each.
+// On update the type is dropped (it cannot change) and clearable fields get explicit empty values;
+// the http-only ones are skipped for other types because Pingdom rejects them with a 400.
+func (r *CheckRequest) body(update bool) (map[string]any, error) {
+	raw, err := json.Marshal(r)
+	if err != nil {
+		return nil, err
+	}
+	m := map[string]any{}
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return nil, err
+	}
+	delete(m, "requestheaders")
+	for i, h := range r.RequestHeaders {
+		k := "requestheaders"
+		if i > 0 {
+			k += strconv.Itoa(i)
+		}
+		m[k] = []string{h}
+	}
+	if !update {
+		return m, nil
+	}
+	delete(m, "type")
+	empty := func(v any, keys ...string) {
+		for _, k := range keys {
+			if _, ok := m[k]; !ok {
+				m[k] = v
+			}
+		}
+	}
+	empty("", "custom_message", "userids", "teamids")
+	empty([]string{}, "tags", "probe_filters", "integrationids")
+	if r.Type == "http" {
+		// shortcut: shouldcontain and shouldnotcontain are not cleared, Pingdom rejects both together with a 400.
+		empty("", "postdata")
+		empty([]string{}, "requestheaders")
+	}
+	return m, nil
 }
 
 func (c *Client) DeleteCheck(ctx context.Context, id int64) error {

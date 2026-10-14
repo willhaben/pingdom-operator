@@ -153,10 +153,20 @@ func (in *CheckSpec) DeepCopyInto(out *CheckSpec) {
 		*out = new(bool)
 		**out = **in
 	}
+	if in.URLTmplSecretRef != nil {
+		in, out := &in.URLTmplSecretRef, &out.URLTmplSecretRef
+		*out = new(v1.LocalObjectReference)
+		**out = **in
+	}
 	if in.RequestHeaders != nil {
 		in, out := &in.RequestHeaders, &out.RequestHeaders
 		*out = make([]string, len(*in))
 		copy(*out, *in)
+	}
+	if in.RequestHeadersSecretRef != nil {
+		in, out := &in.RequestHeadersSecretRef, &out.RequestHeadersSecretRef
+		*out = new(v1.LocalObjectReference)
+		**out = **in
 	}
 	if in.VerifyCertificate != nil {
 		in, out := &in.VerifyCertificate, &out.VerifyCertificate
@@ -192,6 +202,10 @@ func (in *CheckStatus) DeepCopyInto(out *CheckStatus) {
 		in, out := &in.CheckID, &out.CheckID
 		*out = new(int64)
 		**out = **in
+	}
+	if in.LastSyncTime != nil {
+		in, out := &in.LastSyncTime, &out.LastSyncTime
+		*out = (*in).DeepCopy()
 	}
 	if in.Conditions != nil {
 		in, out := &in.Conditions, &out.Conditions

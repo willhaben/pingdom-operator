@@ -35,6 +35,7 @@ import (
 
 type fakePingdom struct {
 	created, updated []*pingdom.CheckRequest
+	updatedIDs       []int64
 	deletedIDs       []int64
 	err              error
 }
@@ -47,11 +48,12 @@ func (f *fakePingdom) CreateCheck(_ context.Context, r *pingdom.CheckRequest) (i
 	return 42, nil
 }
 
-func (f *fakePingdom) UpdateCheck(_ context.Context, _ int64, r *pingdom.CheckRequest) error {
+func (f *fakePingdom) UpdateCheck(_ context.Context, id int64, r *pingdom.CheckRequest) error {
 	if f.err != nil {
 		return f.err
 	}
 	f.updated = append(f.updated, r)
+	f.updatedIDs = append(f.updatedIDs, id)
 	return nil
 }
 
@@ -79,7 +81,7 @@ var _ = Describe("Check Controller", func() {
 
 	BeforeEach(func() {
 		fake = &fakePingdom{}
-		reconciler = &CheckReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), Pingdom: fake}
+		reconciler = &CheckReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), Pingdom: fake, APIReader: k8sClient}
 		Expect(k8sClient.Create(ctx, &pingdomwillhabenatv1alpha1.Check{
 			ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: key.Namespace},
 			Spec:       pingdomwillhabenatv1alpha1.CheckSpec{Host: "example.com", Type: "http"},
@@ -115,7 +117,6 @@ var _ = Describe("Check Controller", func() {
 		_, err = reconcileOnce()
 		Expect(err).NotTo(HaveOccurred())
 		Expect(fake.updated).To(HaveLen(1))
-		Expect(fake.updated[0].Type).To(BeEmpty())
 		Expect(fake.updated[0].Paused).To(BeTrue())
 
 		Expect(k8sClient.Delete(ctx, get())).To(Succeed())
@@ -176,7 +177,7 @@ var _ = Describe("Check Controller", func() {
 		_, err := reconcileOnce()
 		Expect(err).To(HaveOccurred())
 		Expect(fake.created).To(BeEmpty())
-		Expect(meta.FindStatusCondition(get().Status.Conditions, conditionReady).Reason).To(Equal(reasonAuthSecret))
+		Expect(meta.FindStatusCondition(get().Status.Conditions, conditionReady).Reason).To(Equal(reasonSecret))
 	})
 
 	It("sends user:password from the auth Secret", func() {
@@ -217,6 +218,118 @@ var _ = Describe("Check Controller", func() {
 		c := get()
 		Expect(c.Finalizers).To(ContainElement(finalizer))
 		Expect(meta.FindStatusCondition(c.Status.Conditions, conditionReady).Reason).To(Equal(reasonDeleteFailed))
+	})
+
+	newSecret := func(name string, data map[string]string) *corev1.Secret {
+		s := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: key.Namespace}, StringData: data}
+		Expect(k8sClient.Create(ctx, s)).To(Succeed())
+		DeferCleanup(func() { Expect(k8sClient.Delete(ctx, s)).To(Succeed()) })
+		return s
+	}
+	update := func(f func(*pingdomwillhabenatv1alpha1.Check)) {
+		c := get()
+		f(c)
+		Expect(k8sClient.Update(ctx, c)).To(Succeed())
+	}
+	ref := func(name string) *corev1.LocalObjectReference { return &corev1.LocalObjectReference{Name: name} }
+
+	It("sends plain and Secret headers sorted, the Secret replacing a plain header of the same name", func() {
+		newSecret("hdr", map[string]string{"User-Agent": "tok", "Authorization": "Bearer x"})
+		update(func(c *pingdomwillhabenatv1alpha1.Check) {
+			c.Spec.RequestHeaders = []string{"user-agent:old", "X-WH-Client:pingdom"}
+			c.Spec.RequestHeadersSecretRef = ref("hdr")
+		})
+		_, err := reconcileOnce()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fake.created[0].RequestHeaders).To(Equal([]string{"X-WH-Client:pingdom", "Authorization:Bearer x", "User-Agent:tok"}))
+	})
+
+	It("renders urlTmpl with the Secret values", func() {
+		newSecret("url", map[string]string{"key": "a b&c"})
+		update(func(c *pingdomwillhabenatv1alpha1.Check) {
+			c.Spec.URLTmpl = "/search?key={{ .key | urlquery }}&q=test"
+			c.Spec.URLTmplSecretRef = ref("url")
+		})
+		_, err := reconcileOnce()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fake.created[0].URL).To(Equal("/search?key=a+b%26c&q=test"))
+	})
+
+	It("reports a urlTmpl variable that is not in the Secret as InvalidSpec without retrying", func() {
+		update(func(c *pingdomwillhabenatv1alpha1.Check) { c.Spec.URLTmpl = "/{{ .nope }}" })
+		_, err := reconcileOnce()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fake.created).To(BeEmpty())
+		cond := meta.FindStatusCondition(get().Status.Conditions, conditionReady)
+		Expect(cond.Reason).To(Equal(reasonInvalidSpec))
+		Expect(cond.Message).To(ContainSubstring("nope"))
+	})
+
+	It("rejects url together with urlTmpl", func() {
+		c := get()
+		c.Spec.URL, c.Spec.URLTmpl = "/a", "/b"
+		Expect(k8sClient.Update(ctx, c)).To(MatchError(ContainSubstring("url and urlTmpl are mutually exclusive")))
+	})
+
+	It("sends the check again when a referenced Secret changes", func() {
+		s := newSecret("hdr", map[string]string{"X-Token": "1"})
+		update(func(c *pingdomwillhabenatv1alpha1.Check) { c.Spec.RequestHeadersSecretRef = ref("hdr") })
+		Expect(reconciler.checksForSecret(ctx, s)).To(ConsistOf(reconcile.Request{NamespacedName: key}))
+		Expect(reconciler.checksForSecret(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "other", Namespace: key.Namespace}})).To(BeEmpty())
+
+		_, err := reconcileOnce()
+		Expect(err).NotTo(HaveOccurred())
+		_, err = reconcileOnce()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fake.updated).To(BeEmpty())
+
+		s.StringData = map[string]string{"X-Token": "2"}
+		Expect(k8sClient.Update(ctx, s)).To(Succeed())
+		_, err = reconcileOnce()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fake.updated).To(HaveLen(1))
+		Expect(fake.updated[0].RequestHeaders).To(Equal([]string{"X-Token:2"}))
+	})
+
+	It("sends the check again after the resync interval", func() {
+		_, err := reconcileOnce()
+		Expect(err).NotTo(HaveOccurred())
+		res, err := reconcileOnce()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fake.updated).To(BeEmpty())
+		Expect(res.RequeueAfter).To(BeNumerically(">", 0))
+		Expect(res.RequeueAfter).To(BeNumerically("<=", resyncInterval))
+
+		c := get()
+		old := metav1.NewTime(time.Now().Add(-resyncInterval - time.Minute))
+		c.Status.LastSyncTime = &old
+		Expect(k8sClient.Status().Update(ctx, c)).To(Succeed())
+		res, err = reconcileOnce()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fake.updated).To(HaveLen(1))
+		Expect(fake.updatedIDs).To(Equal([]int64{42}))
+		Expect(res.RequeueAfter).To(Equal(resyncInterval))
+	})
+
+	It("adopts the Pingdom check named by the check-id annotation", func() {
+		update(func(c *pingdomwillhabenatv1alpha1.Check) {
+			c.Annotations = map[string]string{annotationCheckID: "77"}
+		})
+		_, err := reconcileOnce()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fake.created).To(BeEmpty())
+		Expect(fake.updatedIDs).To(Equal([]int64{77}))
+		Expect(*get().Status.CheckID).To(Equal(int64(77)))
+	})
+
+	It("reports a malformed check-id annotation as InvalidSpec without retrying", func() {
+		update(func(c *pingdomwillhabenatv1alpha1.Check) {
+			c.Annotations = map[string]string{annotationCheckID: "abc"}
+		})
+		_, err := reconcileOnce()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fake.created).To(BeEmpty())
+		Expect(meta.FindStatusCondition(get().Status.Conditions, conditionReady).Reason).To(Equal(reasonInvalidSpec))
 	})
 
 	It("rejects an immutable type change", func() {

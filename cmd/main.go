@@ -190,9 +190,10 @@ func main() {
 	}
 
 	if err := (&controller.CheckReconciler{
-		Client:  mgr.GetClient(),
-		Scheme:  mgr.GetScheme(),
-		Pingdom: pingdom.New(pingdomToken),
+		Client:    mgr.GetClient(),
+		Scheme:    mgr.GetScheme(),
+		Pingdom:   pingdom.New(pingdomToken),
+		APIReader: mgr.GetAPIReader(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "check")
 		os.Exit(1)
