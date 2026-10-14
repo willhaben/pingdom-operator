@@ -22,9 +22,11 @@ package e2e
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -62,6 +64,19 @@ var _ = Describe("Manager", Ordered, func() {
 			"pod-security.kubernetes.io/enforce=restricted")
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to label namespace with restricted policy")
+
+		By("creating the Pingdom API token Secret")
+		// A dummy token is enough for the manager to start; only the real-API test needs a valid one.
+		token := pingdomToken()
+		if token == "" {
+			token = "dummy"
+		}
+		tokenFile := filepath.Join(GinkgoT().TempDir(), "token")
+		Expect(os.WriteFile(tokenFile, []byte(token), 0o600)).To(Succeed())
+		cmd = exec.Command("kubectl", "create", "secret", "generic", "pingdom-api-token",
+			"-n", namespace, "--from-file=token="+tokenFile)
+		_, err = utils.Run(cmd)
+		Expect(err).NotTo(HaveOccurred(), "Failed to create the Pingdom token Secret")
 
 		By("installing CRDs")
 		cmd = exec.Command("make", "install")
@@ -270,6 +285,111 @@ var _ = Describe("Manager", Ordered, func() {
 
 		// +kubebuilder:scaffold:e2e-webhooks-checks
 
+		It("should create, update and delete a check in Pingdom", func() {
+			token := pingdomToken()
+			if token == "" {
+				Skip("PINGDOM_API_TOKEN is not set and there is no .env file")
+			}
+
+			name := fmt.Sprintf("e2e-check-%d", time.Now().Unix())
+			manifest := func(name string, resolution int) string {
+				// paused so the test never triggers real alerts
+				return fmt.Sprintf(`apiVersion: pingdom.willhaben.at.willhaben.at/v1alpha1
+kind: Check
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  host: example.com
+  type: http
+  url: /
+  encryption: true
+  port: 443
+  paused: true
+  resolution: %d
+  tags: [pingdom-operator-e2e]
+`, name, namespace, resolution)
+			}
+			kubectlApply := func(m string) {
+				cmd := exec.Command("kubectl", "apply", "-f", "-")
+				cmd.Stdin = strings.NewReader(m)
+				_, err := utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred())
+			}
+			jsonpath := func(g Gomega, name, path string) string {
+				cmd := exec.Command("kubectl", "get", "checks.pingdom.willhaben.at.willhaben.at", name,
+					"-n", namespace, "-o", "jsonpath="+path)
+				out, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				return strings.TrimSpace(out)
+			}
+			DeferCleanup(func() {
+				cmd := exec.Command("kubectl", "delete", "checks.pingdom.willhaben.at.willhaben.at", name,
+					"-n", namespace, "--ignore-not-found", "--timeout=2m")
+				_, _ = utils.Run(cmd)
+			})
+
+			By("creating the Check")
+			kubectlApply(manifest(name, 5))
+			var checkID string
+			Eventually(func(g Gomega) {
+				g.Expect(jsonpath(g, name, "{.status.conditions[?(@.type=='Ready')].status}")).To(Equal("True"),
+					"Ready condition; message: "+jsonpath(g, name, "{.status.conditions[?(@.type=='Ready')].message}"))
+				checkID = jsonpath(g, name, "{.status.checkID}")
+				g.Expect(checkID).NotTo(BeEmpty())
+			}).Should(Succeed())
+
+			By("verifying the check exists in Pingdom")
+			code, body := pingdomGet(token, checkID)
+			Expect(code).To(Equal(http.StatusOK))
+			Expect(body["check"].(map[string]any)["name"]).To(Equal(name))
+			Expect(body["check"].(map[string]any)["resolution"]).To(BeEquivalentTo(5))
+
+			By("updating the Check")
+			kubectlApply(manifest(name, 15))
+			Eventually(func(g Gomega) {
+				g.Expect(jsonpath(g, name, "{.status.observedGeneration}")).To(Equal(jsonpath(g, name, "{.metadata.generation}")))
+				_, body := pingdomGet(token, checkID)
+				g.Expect(body["check"].(map[string]any)["resolution"]).To(BeEquivalentTo(15))
+			}).Should(Succeed())
+
+			By("deleting the Check")
+			cmd := exec.Command("kubectl", "delete", "checks.pingdom.willhaben.at.willhaben.at", name,
+				"-n", namespace, "--timeout=2m")
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			code, _ = pingdomGet(token, checkID)
+			// Pingdom answers 403 "Invalid check identifier" for missing checks
+			Expect(code).To(BeElementOf(http.StatusForbidden, http.StatusNotFound))
+
+			By("deleting a Check whose Pingdom check is already gone")
+			gone := name + "-gone"
+			kubectlApply(manifest(gone, 5))
+			var goneID string
+			Eventually(func(g Gomega) {
+				g.Expect(jsonpath(g, gone, "{.status.conditions[?(@.type=='Ready')].status}")).To(Equal("True"))
+				goneID = jsonpath(g, gone, "{.status.checkID}")
+				g.Expect(goneID).NotTo(BeEmpty())
+			}).Should(Succeed())
+			code, _ = pingdomDo(http.MethodDelete, token, goneID)
+			Expect(code).To(Equal(http.StatusOK))
+			DeferCleanup(func() {
+				cmd := exec.Command("kubectl", "delete", "checks.pingdom.willhaben.at.willhaben.at", gone,
+					"-n", namespace, "--ignore-not-found", "--timeout=2m")
+				_, _ = utils.Run(cmd)
+			})
+			cmd = exec.Command("kubectl", "delete", "checks.pingdom.willhaben.at.willhaben.at", gone,
+				"-n", namespace, "--timeout=2m")
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "deletion must finish even though Pingdom no longer has the check")
+
+			By("verifying no orphaned (duplicate) checks were left in Pingdom")
+			for _, n := range []string{name, gone} {
+				Eventually(func() int { return pingdomCount(token, n) }, 30*time.Second).Should(BeZero(),
+					"Pingdom still has a check named %s that no Check resource tracks", n)
+			}
+		})
+
 		// TODO: Customize the e2e test suite with scenarios specific to your project.
 		// Consider applying sample/CR(s) and check their status and/or verifying
 		// the reconciliation by using the metrics, i.e.:
@@ -336,4 +456,61 @@ type tokenRequest struct {
 	Status struct {
 		Token string `json:"token"`
 	} `json:"status"`
+}
+
+// pingdomToken returns PINGDOM_API_TOKEN, falling back to the (gitignored) .env file at the repo root,
+// which may hold the bare token or PINGDOM_API_TOKEN=<token>.
+func pingdomToken() string {
+	if t := os.Getenv("PINGDOM_API_TOKEN"); t != "" {
+		return t
+	}
+	dir, err := utils.GetProjectDir()
+	if err != nil {
+		return ""
+	}
+	b, err := os.ReadFile(filepath.Join(dir, ".env"))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimPrefix(strings.TrimSpace(string(b)), "PINGDOM_API_TOKEN=")
+}
+
+// pingdomGet fetches a check straight from the Pingdom API.
+func pingdomGet(token, checkID string) (int, map[string]any) {
+	return pingdomDo(http.MethodGet, token, checkID)
+}
+
+func pingdomDo(method, token, checkID string) (int, map[string]any) {
+	req, err := http.NewRequest(method, "https://api.pingdom.com/api/3.1/checks/"+checkID, nil)
+	Expect(err).NotTo(HaveOccurred())
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	Expect(err).NotTo(HaveOccurred())
+	defer func() { _ = resp.Body.Close() }()
+	var body map[string]any
+	_ = json.NewDecoder(resp.Body).Decode(&body)
+	return resp.StatusCode, body
+}
+
+// pingdomCount returns how many checks named name exist in Pingdom.
+func pingdomCount(token, name string) int {
+	req, err := http.NewRequest(http.MethodGet, "https://api.pingdom.com/api/3.1/checks?include_tags=true", nil)
+	Expect(err).NotTo(HaveOccurred())
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	Expect(err).NotTo(HaveOccurred())
+	defer func() { _ = resp.Body.Close() }()
+	var body struct {
+		Checks []struct {
+			Name string `json:"name"`
+		} `json:"checks"`
+	}
+	Expect(json.NewDecoder(resp.Body).Decode(&body)).To(Succeed())
+	n := 0
+	for _, c := range body.Checks {
+		if c.Name == name {
+			n++
+		}
+	}
+	return n
 }
